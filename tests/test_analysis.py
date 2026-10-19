@@ -3,6 +3,7 @@
     python3 -m unittest discover -s tests -v
 """
 
+import json
 import os
 import shutil
 import sys
@@ -127,7 +128,12 @@ class AnalysisTests(unittest.TestCase):
         self.assertGreater(os.path.getsize(html), 10_000)
         with open(html, encoding="utf-8") as fh:
             text = fh.read()
-        self.assertNotIn("new text", text)                    # no empty plotly annotations
+        # every label has text (plotly draws "new text" for an empty one; that string is also in
+        # the embedded plotly.js, so the figure's annotation list is checked, not the whole file)
+        i = text.index('"annotations":') + len('"annotations":')
+        annotations, _ = json.JSONDecoder().raw_decode(text, i)
+        self.assertTrue(annotations)
+        self.assertTrue(all(a.get("text") for a in annotations), annotations)
         self.assertIn("prefill 0.50 s", text)                 # summary line has the prefill time
 
     @unittest.skipUnless(__import__("importlib").util.find_spec("matplotlib"), "matplotlib not installed")
