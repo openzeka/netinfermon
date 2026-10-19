@@ -54,6 +54,7 @@ class WebTests(unittest.TestCase):
         at.run()
         self.assertFalse(at.exception, [e.value for e in at.exception])
         self.assertEqual([t.label for t in at.tabs], ["Live", "Benchmark", "Results", "Compare"])
+        self.assertEqual(next(s.value for s in at.selectbox if s.label == "Plan"), "smoke")
         md = "\n".join(m.value for m in at.markdown)
         self.assertIn("demo / B", md)                  # run panel shows the last run
         self.assertIn("A → B", md.replace("demo/", "")) # compare table rendered

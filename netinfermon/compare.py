@@ -27,6 +27,11 @@ def num(v):
     return None if v in (None, "") else float(v)
 
 
+def _sum(row: dict, *keys):
+    vals = [num(row.get(k)) for k in keys]
+    return None if any(v is None for v in vals) else sum(vals)
+
+
 def change(a, b):
     return None if a in (None, 0) or b is None else 100.0 * (b - a) / a
 
@@ -60,6 +65,8 @@ def compare(base_dir: str, test_dir: str, out_dir: str | None = None) -> dict:
             "transfer_change_s": (None if None in (num(x.get("prefill_transfer_s")), num(y.get("prefill_transfer_s")))
                                   else num(y["prefill_transfer_s"]) - num(x["prefill_transfer_s"])),
             f"stall_s_{a}": num(x.get("prefill_stall_s")), f"stall_s_{b}": num(y.get("prefill_stall_s")),
+            f"leadin_tail_s_{a}": _sum(x, "prefill_leadin_s", "prefill_tail_s"),
+            f"leadin_tail_s_{b}": _sum(y, "prefill_leadin_s", "prefill_tail_s"),
             f"prefill_1ms_p99_{a}": num(x.get("prefill_1ms_p99_gbps")),
             f"prefill_1ms_p99_{b}": num(y.get("prefill_1ms_p99_gbps")),
         })
@@ -82,17 +89,20 @@ def markdown(res: dict) -> str:
     h = lambda v, n=0: "—" if v is None else f"{v:.{n}f}"
     md = [f"# {a} → {b}", "", f"- Model: `{res['model']}`", "",
           f"| Point | Conc | In → out | TTFT {a} (ms) | TTFT {b} (ms) | TTFT change | Decode TPS change "
-          f"| Prefill transfer change (s) | Stalls {a} / {b} (s) |",
-          "|---|---|---|---|---|---|---|---|---|"]
+          f"| Prefill transfer change (s) | Stalls {a} / {b} (s) | Lead-in + tail {a} / {b} (s) |",
+          "|---|---|---|---|---|---|---|---|---|---|"]
     for r in res["rows"]:
         md.append(f"| {r['point']} | {r['concurrency']} | {r['input_tokens']} → {r['output_tokens']} | "
                   f"{h(r[f'ttft_ms_{a}'])} | {h(r[f'ttft_ms_{b}'])} | {g(r['ttft_change_%'])} | "
                   f"{g(r['decode_tps_change_%'])} | "
                   f"{'—' if r['transfer_change_s'] is None else format(r['transfer_change_s'], '+.2f')} | "
-                  f"{h(r[f'stall_s_{a}'], 2)} / {h(r[f'stall_s_{b}'], 2)} |")
+                  f"{h(r[f'stall_s_{a}'], 2)} / {h(r[f'stall_s_{b}'], 2)} | "
+                  f"{h(r[f'leadin_tail_s_{a}'], 2)} / {h(r[f'leadin_tail_s_{b}'], 2)} |")
     md += ["", "Means over measured rounds. Transfer = prefill time with the link carrying data (5 ms bins "
            "≥ 5 Gb/s): its change is the part of the TTFT change the link explains. Stalls (quiet runs "
-           "≥ 100 ms) are cluster-wide waiting and can differ between runs for reasons other than the link.", ""]
+           "≥ 100 ms between transfers) are cluster-wide waiting. Lead-in + tail = quiet time before the "
+           "first and after the last transfer (request handling, final compute). Both can differ between "
+           "runs for reasons other than the link.", ""]
     if res["warnings"]:
         md += ["**Warnings:**", ""] + [f"- {w}" for w in res["warnings"]] + [""]
     return "\n".join(md)

@@ -9,9 +9,12 @@ the recording's clock (CLOCK_MONOTONIC_RAW, same host):
 Per round: bytes sent and received (exact, all devices), bytes per input token, mean rate,
 5 ms peak (guaranteed minimum), per-sample (~1 ms) p50 / p90 / p99 during prefill, link busy
 f = (bytes / link maximum) / prefill time, and the prefill split into
+    lead-in   quiet time before the first transfer (request handling, scheduling)
     transfer  5 ms bins with TX >= 5 Gb/s
-    gaps      quieter runs shorter than 100 ms (compute between collectives)
-    stalls    quieter runs of 100 ms or more (every rank waiting; often one slow node)
+    gaps      quiet runs shorter than 100 ms between transfers (compute between collectives)
+    stalls    quiet runs of 100 ms or more between transfers (every rank waiting; often one
+              slow node)
+    tail      quiet time after the last transfer until the first token
 
 Per point: means over the measured rounds (warm-up excluded); peaks are the highest.
 Writes <run>/report/{points.csv, rounds.csv, report.md} and, on request, charts.
@@ -127,29 +130,29 @@ def _pct(xs: list[float], p: float):
 
 
 def prefill_split(rec: Recording, t0: int, t1: int) -> dict:
-    """Prefill time split into transfer / short gaps / stalls, from consecutive 5 ms bins of
-    TX over all devices."""
-    bins = _grid([rec.state.series[(dev, "tx")] for dev in rec.devices], t0, t1, W5)
-    transfer = gap = stall = 0
-    run = 0
-
-    def close_run():
-        nonlocal gap, stall
-        if run * W5 >= STALL_NS:
-            stall += run
-        else:
-            gap += run
-
-    for r in bins:
-        if r.gbps >= TRANSFER_GBPS:
-            close_run()
+    """Prefill time split into lead-in / transfer / gaps / stalls / tail, from consecutive 5 ms
+    bins of TX over all devices. Quiet time before the first and after the last transfer is
+    request handling and the final compute, not waiting between collectives, so only quiet
+    runs between transfers count as gaps or stalls."""
+    busy = [r.gbps >= TRANSFER_GBPS for r in
+            _grid([rec.state.series[(dev, "tx")] for dev in rec.devices], t0, t1, W5)]
+    if not any(busy):
+        return {"prefill_leadin_s": len(busy) * W5 / 1e9, "prefill_transfer_s": 0.0,
+                "prefill_gap_s": 0.0, "prefill_stall_s": 0.0, "prefill_tail_s": 0.0}
+    first = busy.index(True)
+    last = len(busy) - 1 - busy[::-1].index(True)
+    transfer = gap = stall = run = 0
+    for b in busy[first:last + 1]:
+        if b:
+            if run:
+                stall, gap = (stall + run, gap) if run * W5 >= STALL_NS else (stall, gap + run)
             run = 0
             transfer += 1
         else:
             run += 1
-    close_run()
-    return {"prefill_transfer_s": transfer * W5 / 1e9, "prefill_gap_s": gap * W5 / 1e9,
-            "prefill_stall_s": stall * W5 / 1e9}
+    s = lambda n: n * W5 / 1e9
+    return {"prefill_leadin_s": s(first), "prefill_transfer_s": s(transfer), "prefill_gap_s": s(gap),
+            "prefill_stall_s": s(stall), "prefill_tail_s": s(len(busy) - 1 - last)}
 
 
 def analyze(run_dir: str, rows: list[dict], plan: dict, link_gbps: float,
@@ -223,8 +226,9 @@ def analyze(run_dir: str, rows: list[dict], plan: dict, link_gbps: float,
         points[p["id"]] = {
             **{k: avg(k) for k in ("prefill_s", "prefill_bytes_per_token", "prefill_mean_gbps",
                                    "prefill_1ms_p50_gbps", "prefill_1ms_p90_gbps", "prefill_1ms_p99_gbps",
-                                   "prefill_link_busy", "prefill_transfer_s", "prefill_gap_s",
-                                   "prefill_stall_s", "generation_mean_gbps", "round_tx_GB")},
+                                   "prefill_link_busy", "prefill_leadin_s", "prefill_transfer_s",
+                                   "prefill_gap_s", "prefill_stall_s", "prefill_tail_s",
+                                   "generation_mean_gbps", "round_tx_GB")},
             "prefill_peak5_min_gbps": top("prefill_peak5_min_gbps"),
             **{k: avg(k) for k in meas[0] if k.startswith("tx_share_")},
         }
@@ -317,7 +321,7 @@ def _write_md(path: str, manifest: dict, points: list[dict], result: dict) -> No
              f"- Rounds: {plan['warmup_rounds']} warm-up + {plan['measured_rounds']} measured per point",
              f"- Notes: {manifest.get('notes') or '—'}", "",
              "| Point | Conc | In → out | TTFT mean (ms) | Decode TPS | Prefill MB/token | Prefill 1 ms p90 / p99 (Gb/s) "
-             "| Transfer / gaps / stalls (s) | Link busy |",
+             "| Prefill: lead-in / transfer / gaps / stalls / tail (s) | Link busy |",
              "|---|---|---|---|---|---|---|---|---|"]
     for p in points:
         mb = f((p.get("prefill_bytes_per_token") or 0) / 1e6, 2) if p.get("prefill_bytes_per_token") else "—"
@@ -325,12 +329,14 @@ def _write_md(path: str, manifest: dict, points: list[dict], result: dict) -> No
         lines.append(f"| {p['point']} | {p['concurrency']} | {p['input_tokens']} → {p['output_tokens']} | "
                      f"{f(p['ttft_ms_mean'], 0)} | {f(p['decode_tps_mean'])} | {mb} | "
                      f"{f(p.get('prefill_1ms_p90_gbps'), 0)} / {f(p.get('prefill_1ms_p99_gbps'), 0)} | "
-                     f"{f(p.get('prefill_transfer_s'), 2)} / {f(p.get('prefill_gap_s'), 2)} / "
-                     f"{f(p.get('prefill_stall_s'), 2)} | {busy} |")
+                     f"{f(p.get('prefill_leadin_s'), 2)} / {f(p.get('prefill_transfer_s'), 2)} / "
+                     f"{f(p.get('prefill_gap_s'), 2)} / {f(p.get('prefill_stall_s'), 2)} / "
+                     f"{f(p.get('prefill_tail_s'), 2)} | {busy} |")
     lines += ["", "Means over the measured rounds (warm-up excluded). Decode TPS excludes TTFT: "
               "(output tokens − 1) ÷ (last token − first token). Prefill = request start → (last) first token. "
               "1 ms values are per sampler tick and show short collective bursts that 5 ms windows flatten. "
-              "Transfer = 5 ms bins with TX ≥ 5 Gb/s; stalls = quiet runs ≥ 100 ms.", ""]
+              "Prefill split (5 ms bins): transfer = TX ≥ 5 Gb/s; lead-in / tail = quiet before the first / after "
+              "the last transfer; gaps / stalls = quiet runs between transfers shorter / at least 100 ms.", ""]
     if result["warnings"]:
         lines += ["## Warnings", ""] + [f"- {w}" for w in result["warnings"]] + [""]
     with open(path, "w", encoding="utf-8") as fh:

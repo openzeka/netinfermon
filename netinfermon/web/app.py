@@ -56,7 +56,7 @@ with st.sidebar:
             except RuntimeError as e:
                 st.error(str(e))
             st.rerun()
-    st.caption("Benchmark runs record by themselves. Manual recordings go to the Results tab → Recordings.")
+    st.caption("Benchmark runs record by themselves. Manual recordings appear under Results → Manual recordings.")
 
     if not svc.alive:
         st.error("The sampler stopped.\n\n" + "\n".join(svc.stderr))
@@ -254,7 +254,9 @@ with tab_bench:
         mode = st.radio("Workload", ["Built-in plan", "Custom"], horizontal=True)
         if mode == "Built-in plan":
             plans = loadgen.list_plans()
-            name = st.selectbox("Plan", list(plans), format_func=lambda n: f"{n} — {plans[n][:70]}")
+            names = list(plans)
+            name = st.selectbox("Plan", names, index=names.index("smoke") if "smoke" in names else 0,
+                                format_func=lambda n: f"{n} — {plans[n][:70]}")
             plan = loadgen.load_plan(name)
             st.dataframe(pd.DataFrame(plan["points"]), hide_index=True, width="stretch")
             st.caption(f"{plan['warmup_rounds']} warm-up + {plan['measured_rounds']} measured rounds per point, "
@@ -297,6 +299,13 @@ with tab_bench:
         @st.fragment(run_every=1.0)
         def run_panel():
             stt = svc.run_status()
+            # The Results and Compare tabs only change on a full rerun: do one whenever a run (also
+            # one started from the command line) starts, changes state or ends.
+            key = None if not stt else (stt["campaign"], stt["label"], stt["state"])
+            seen = st.session_state.get("run_key", "unset")
+            st.session_state.run_key = key
+            if seen != "unset" and seen != key:
+                st.rerun(scope="app")
             if not stt:
                 st.info("No run yet.")
                 return

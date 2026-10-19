@@ -60,10 +60,12 @@ class AnalysisTests(unittest.TestCase):
         # per-sample: 60% of prefill at 150 Gb/s → p90 / p99 at the burst rate, p50 too
         self.assertAlmostEqual(r["prefill_1ms_p90_gbps"], 150.0, delta=15.0)
         self.assertAlmostEqual(r["prefill_1ms_p99_gbps"], 150.0, delta=25.0)
-        # split: 300 ms transfer, the 200 ms quiet run is a stall, no short gaps
+        # split: 300 ms transfer, the 200 ms quiet run between transfers is a stall, no short
+        # gaps, and no quiet time at the edges (traffic starts and ends with the prefill)
         self.assertAlmostEqual(r["prefill_transfer_s"], 0.300, delta=0.011)
         self.assertAlmostEqual(r["prefill_stall_s"], 0.200, delta=0.011)
         self.assertLess(r["prefill_gap_s"], 0.011)
+        self.assertLess(r["prefill_leadin_s"] + r["prefill_tail_s"], 0.011)
         self.assertAlmostEqual(r["generation_tx_GB"], 2e9 * 1.0 / 8 / 1e9, delta=0.025)   # 0.25 GB
         self.assertAlmostEqual(sum(v for k, v in r.items() if k.startswith("tx_share_")), 1.0, places=6)
         p = points["P1"]                                  # measured round only (warm-up excluded)
@@ -81,8 +83,24 @@ class AnalysisTests(unittest.TestCase):
         rounds, _, _ = analysis.analyze(self.dir, rows, self.plan, 195.0)
         r = rounds[0]
         self.assertEqual(r["prefill_stall_s"], 0.0)
-        self.assertAlmostEqual(r["prefill_transfer_s"] + r["prefill_gap_s"], 0.6, delta=0.011)
+        self.assertAlmostEqual(sum(r[f"prefill_{k}_s"] for k in ("leadin", "transfer", "gap", "tail")),
+                               0.6, delta=0.011)
         self.assertGreater(r["prefill_gap_s"], 0.25)
+
+    def test_quiet_edges_are_leadin_and_tail_not_stalls(self):
+        # prefill 1000–1600 ms: 150 ms quiet (request handling), 10 ms bursts every 20 ms from 1150
+        # (the last one ends at 1470), then 130 ms quiet before the first token. Seen on a real
+        # 1K-token prefill; these are not stalls.
+        fn = lambda t: 150.0 if 1150 <= t < 1480 and (t % 20) < 10 else 0.0
+        lines, _ = simulate(fn, 2000)
+        with open(os.path.join(self.dir, "network", "recording-1.csv"), "w") as f:
+            f.writelines(lines)
+        rows = [{**self.rows[1], "t0_ns": ns(1000), "t_first_ns": ns(1600), "t_end_ns": ns(1700)}]
+        r = analysis.analyze(self.dir, rows, self.plan, 195.0)[0][0]
+        self.assertEqual(r["prefill_stall_s"], 0.0)
+        self.assertAlmostEqual(r["prefill_leadin_s"], 0.150, delta=0.011)
+        self.assertAlmostEqual(r["prefill_tail_s"], 0.130, delta=0.011)
+        self.assertAlmostEqual(r["prefill_transfer_s"] + r["prefill_gap_s"], 0.320, delta=0.011)
 
     def test_round_outside_recording_is_flagged(self):
         rows = self.rows + [{**self.rows[1], "round": "2", "t0_ns": ns(9000), "t_first_ns": ns(9100),

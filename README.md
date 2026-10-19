@@ -35,6 +35,11 @@ netinfermon doctor          # finds RDMA devices, builds the sampler, checks cou
 netinfermon serve           # → open http://<node>:8502
 ```
 
+`uv tool install` puts the command in `~/.local/bin`, which is on the PATH of a normal login
+shell (run `uv tool update-shell` once if it is not). On start-up Streamlit also prints an
+"External URL" with your network's public address; that does not mean the page is reachable
+from the internet (see [Security](#security)).
+
 Then, in the browser:
 
 1. **Benchmark** tab: endpoint and model, a built-in plan (e.g. `linkspeed`) or a custom workload
@@ -93,7 +98,7 @@ How requests are made, so results are comparable between runs:
 | TTFT, decode TPS, end-to-end TPS, latency | decode TPS excludes TTFT: (output tokens − 1) ÷ (last token − first token) |
 | prefill MB per input token | bytes this node sent during prefill ÷ prompt tokens |
 | prefill 1 ms p50 / p90 / p99 | per-sample rate during prefill; shows collective bursts that 5 ms windows flatten |
-| transfer / gaps / stalls | prefill time with the link carrying data (5 ms bins ≥ 5 Gb/s) / quiet runs < 100 ms (compute between collectives) / quiet runs ≥ 100 ms (every rank waiting, often one slow node) |
+| lead-in / transfer / gaps / stalls / tail | prefill time split in 5 ms bins: quiet before the first transfer (request handling, scheduling) / link carrying data (TX ≥ 5 Gb/s) / quiet runs < 100 ms between transfers (compute between collectives) / quiet runs ≥ 100 ms between transfers (every rank waiting, often one slow node) / quiet after the last transfer until the first token |
 | 5 ms peak (≥) | guaranteed minimum of the highest 5 ms window |
 | link busy | (bytes ÷ link maximum) ÷ prefill time |
 
@@ -102,8 +107,9 @@ prefill and generation marked. `--charts html+svg` also writes SVGs (needs `matp
 long points).
 
 `netinfermon compare BASE TEST` lines up two runs point by point: TTFT and decode change, the change in
-prefill **transfer** time (the part a link change explains), and stall time on both sides (waiting
-that can differ between runs for other reasons).
+prefill **transfer** time (the part a link change explains), and on both sides the stall time and
+the lead-in + tail time (waiting and request handling that can differ between runs for other
+reasons).
 
 ## Recording without the built-in benchmark
 
