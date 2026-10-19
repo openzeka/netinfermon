@@ -125,6 +125,10 @@ class AnalysisTests(unittest.TestCase):
         analysis.analyze(self.dir, self.rows, self.plan, 195.0, charts="html")
         html = os.path.join(self.dir, "report", "P1_traffic.html")
         self.assertGreater(os.path.getsize(html), 10_000)
+        with open(html, encoding="utf-8") as fh:
+            text = fh.read()
+        self.assertNotIn("new text", text)                    # no empty plotly annotations
+        self.assertIn("prefill 0.50 s", text)                 # summary line has the prefill time
 
     @unittest.skipUnless(__import__("importlib").util.find_spec("matplotlib"), "matplotlib not installed")
     def test_svg_chart_written(self):

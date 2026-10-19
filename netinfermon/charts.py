@@ -85,7 +85,7 @@ def _zoom_max(data: dict) -> float:
 def _summary_text(data: dict) -> str:
     s = data["summary"]
     f = lambda k, fmt: "—" if s.get(k) is None else format(s[k], fmt)
-    return (f"Measured rounds (mean): prefill {f('prefill_s_mean', '.2f')} s · "
+    return (f"Measured rounds (mean): prefill {f('prefill_s', '.2f')} s · "
             f"{f('prefill_mean_gbps', '.1f')} Gb/s mean during prefill · 5 ms peak ≥ {f('prefill_peak5_min_gbps', '.1f')} Gb/s · "
             f"link busy {('—' if s.get('prefill_link_busy') is None else format(100 * s['prefill_link_busy'], '.0f') + '%')} · "
             f"{('—' if s.get('prefill_bytes_per_token') is None else format(s['prefill_bytes_per_token'] / 1e6, '.2f'))} MB per input token · "
@@ -196,13 +196,14 @@ def render_html(data: dict, path: str) -> None:
                       row=row, col=1)
         for rd in data["rounds"]:
             ttft, tps = _labels(rd)
+            # Only pass annotation arguments with a label: plotly writes "new text" for an empty one
+            label = lambda text: {"annotation_text": text, "annotation_position": "top",
+                                  "annotation_font_size": 10} if text else {}
             fig.add_vrect(x0=rd["start"], x1=rd["first"], fillcolor="#9aa0a6" if rd["warmup"] else "#2da44e",
                           opacity=0.22, line_width=0, row=row, col=1,
-                          annotation_text=(("warm-up · " if rd["warmup"] else "") + ttft) if row == 1 else None,
-                          annotation_position="top", annotation_font_size=10)
+                          **label((("warm-up · " if rd["warmup"] else "") + ttft) if row == 1 else None))
             fig.add_vrect(x0=rd["first"], x1=rd["end"], fillcolor="#0969da", opacity=0.07, line_width=0,
-                          row=row, col=1, annotation_text=tps if row == 2 else None,
-                          annotation_position="top", annotation_font_size=10)
+                          row=row, col=1, **label(tps if row == 2 else None))
     for rd in data["rounds"]:
         if len(rd["firsts"]) > 1:
             for x in rd["firsts"]:
