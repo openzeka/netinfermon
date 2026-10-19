@@ -299,13 +299,6 @@ with tab_bench:
         @st.fragment(run_every=1.0)
         def run_panel():
             stt = svc.run_status()
-            # The Results and Compare tabs only change on a full rerun: do one whenever a run (also
-            # one started from the command line) starts, changes state or ends.
-            key = None if not stt else (stt["campaign"], stt["label"], stt["state"])
-            seen = st.session_state.get("run_key", "unset")
-            st.session_state.run_key = key
-            if seen != "unset" and seen != key:
-                st.rerun(scope="app")
             if not stt:
                 st.info("No run yet.")
                 return
@@ -333,79 +326,89 @@ with tab_bench:
 # --- Results ----------------------------------------------------------------------------
 
 with tab_results:
-    all_runs = runs()
-    if not all_runs:
-        st.caption(f"No runs yet in {S.data_dir}.")
-    else:
-        choice = st.selectbox("Run (campaign / label)", all_runs)
-        rdir = os.path.join(S.data_dir, choice)
-        man = loadgen.read_json(os.path.join(rdir, "manifest.json"))
-        st.caption(f"Model `{man['model']}` · {man['endpoint']} · expected link: {man['expect']} · "
-                   f"link check: {man.get('link_check', '—')} · notes: {man.get('notes') or '—'}")
-        busy = bool(svc.run_thread and svc.run_thread.is_alive() and svc.runner and svc.runner.dir == rdir)
-        c = st.columns(3)
-        charts = c[0].selectbox("Charts", ["none", "html", "html+svg"],
-                                help="Per-point traffic charts. SVG files are large for long points.")
-        if c[1].button("Build report", disabled=busy, help="Reads the whole recording; takes a while for long runs."):
-            with st.spinner("Building the report…"):
-                analysis.report(rdir, None if charts == "none" else charts)
-        rep = os.path.join(rdir, "report", "report.md")
-        if os.path.exists(rep):
-            with open(rep, encoding="utf-8") as fh:
-                st.markdown(fh.read())
-            buf = io.BytesIO()
-            with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as z:
-                for fn in ("manifest.json", "models.json", "requests.csv"):
-                    if os.path.exists(os.path.join(rdir, fn)):
-                        z.write(os.path.join(rdir, fn), fn)
-                for p in glob.glob(os.path.join(rdir, "report", "*")):
-                    z.write(p, os.path.join("report", os.path.basename(p)))
-            c[2].download_button("Download report (zip)", buf.getvalue(),
-                                 file_name=f"{choice.replace(os.sep, '_')}_report.zip")
-            st.caption("Raw recordings are not in the zip (they are large); copy them with `netinfermon fetch`.")
+    # Refreshes by itself, so runs started or finished meanwhile (also from the CLI) show up
+    @st.fragment(run_every=5.0)
+    def results_panel():
+        all_runs = runs()
+        if not all_runs:
+            st.caption(f"No runs yet in {S.data_dir}.")
         else:
-            summ = loadgen.request_summary(loadgen.read_requests(os.path.join(rdir, "requests.csv")))
-            if summ:
-                st.markdown("Request numbers so far (build the report for the traffic side):")
-                st.dataframe(pd.DataFrame(summ), hide_index=True, width="stretch")
+            choice = st.selectbox("Run (campaign / label)", all_runs)
+            rdir = os.path.join(S.data_dir, choice)
+            man = loadgen.read_json(os.path.join(rdir, "manifest.json"))
+            st.caption(f"Model `{man['model']}` · {man['endpoint']} · expected link: {man['expect']} · "
+                       f"link check: {man.get('link_check', '—')} · notes: {man.get('notes') or '—'}")
+            busy = bool(svc.run_thread and svc.run_thread.is_alive() and svc.runner and svc.runner.dir == rdir)
+            c = st.columns(3)
+            charts = c[0].selectbox("Charts", ["none", "html", "html+svg"],
+                                    help="Per-point traffic charts. SVG files are large for long points.")
+            if c[1].button("Build report", disabled=busy, help="Reads the whole recording; takes a while for long runs."):
+                with st.spinner("Building the report…"):
+                    analysis.report(rdir, None if charts == "none" else charts)
+            rep = os.path.join(rdir, "report", "report.md")
+            if os.path.exists(rep):
+                with open(rep, encoding="utf-8") as fh:
+                    st.markdown(fh.read())
+                buf = io.BytesIO()
+                with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as z:
+                    for fn in ("manifest.json", "models.json", "requests.csv"):
+                        if os.path.exists(os.path.join(rdir, fn)):
+                            z.write(os.path.join(rdir, fn), fn)
+                    for p in glob.glob(os.path.join(rdir, "report", "*")):
+                        z.write(p, os.path.join("report", os.path.basename(p)))
+                c[2].download_button("Download report (zip)", buf.getvalue(),
+                                     file_name=f"{choice.replace(os.sep, '_')}_report.zip")
+                st.caption("Raw recordings are not in the zip (they are large); copy them with `netinfermon fetch`.")
+            else:
+                summ = loadgen.request_summary(loadgen.read_requests(os.path.join(rdir, "requests.csv")))
+                if summ:
+                    st.markdown("Request numbers so far (build the report for the traffic side):")
+                    st.dataframe(pd.DataFrame(summ), hide_index=True, width="stretch")
 
-    st.divider()
-    st.markdown("#### Manual recordings")
-    files = sorted(glob.glob(os.path.join(S.recordings_dir, "rec-*.csv")), key=os.path.getmtime, reverse=True)
-    if not files:
-        st.caption("None yet.")
-    else:
-        rec_choice = st.selectbox("Recording", files, format_func=os.path.basename)
-        if st.button("Summarize per marker"):
-            if rec_choice == svc.rec_path and svc.rec_file:
-                with svc.lock:
-                    svc.rec_file.flush()
-            with st.spinner("Calculating…"):
-                st.session_state.summary = (rec_choice, pd.DataFrame(summarize(
-                    Recording(rec_choice, link_gbps), link_gbps=link_gbps, target_gbps=target_gbps)))
-        if st.session_state.get("summary") and st.session_state.summary[0] == rec_choice:
-            df = st.session_state.summary[1]
-            key = ["phase", "direction", "duration_s", "GB", "mean_Gbps", *[f"{w}ms_peak_min" for w in WINDOWS_MS],
-                   "active_span_s", "link_busy_%", f"%time_{HIST_LABELS[-1]}"]
-            show = df if st.checkbox("All columns") else df[[k for k in key if k in df.columns]]
-            st.dataframe(show, width="stretch", hide_index=True)
-            st.download_button("Summary CSV", df.to_csv(index=False).encode(),
-                               file_name=os.path.basename(rec_choice).replace(".csv", "-summary.csv"))
+        st.divider()
+        st.markdown("#### Manual recordings")
+        files = sorted(glob.glob(os.path.join(S.recordings_dir, "rec-*.csv")), key=os.path.getmtime, reverse=True)
+        if not files:
+            st.caption("None yet.")
+        else:
+            rec_choice = st.selectbox("Recording", files, format_func=os.path.basename)
+            if st.button("Summarize per marker"):
+                if rec_choice == svc.rec_path and svc.rec_file:
+                    with svc.lock:
+                        svc.rec_file.flush()
+                with st.spinner("Calculating…"):
+                    st.session_state.summary = (rec_choice, pd.DataFrame(summarize(
+                        Recording(rec_choice, link_gbps), link_gbps=link_gbps, target_gbps=target_gbps)))
+            if st.session_state.get("summary") and st.session_state.summary[0] == rec_choice:
+                df = st.session_state.summary[1]
+                key = ["phase", "direction", "duration_s", "GB", "mean_Gbps", *[f"{w}ms_peak_min" for w in WINDOWS_MS],
+                       "active_span_s", "link_busy_%", f"%time_{HIST_LABELS[-1]}"]
+                show = df if st.checkbox("All columns") else df[[k for k in key if k in df.columns]]
+                st.dataframe(show, width="stretch", hide_index=True)
+                st.download_button("Summary CSV", df.to_csv(index=False).encode(),
+                                   file_name=os.path.basename(rec_choice).replace(".csv", "-summary.csv"))
+
+    results_panel()
 
 
 # --- Compare ----------------------------------------------------------------------------
 
 with tab_compare:
-    reported = [r for r in runs() if os.path.exists(os.path.join(S.data_dir, r, "report", "points.csv"))]
-    if len(reported) < 2:
-        st.caption("Needs two runs with a built report (Results tab → Build report).")
-    else:
-        c = st.columns(2)
-        base = c[0].selectbox("Base run", reported, index=min(1, len(reported) - 1))
-        test = c[1].selectbox("Compared run", reported, index=0)
-        if base != test:
-            res = compare.compare(os.path.join(S.data_dir, base), os.path.join(S.data_dir, test))
-            st.markdown(compare.markdown(res))
-            if res["rows"]:
-                st.download_button("Comparison CSV", pd.DataFrame(res["rows"]).to_csv(index=False).encode(),
-                                   file_name="comparison.csv")
+    # Refreshes by itself, so newly built reports show up
+    @st.fragment(run_every=5.0)
+    def compare_panel():
+        reported = [r for r in runs() if os.path.exists(os.path.join(S.data_dir, r, "report", "points.csv"))]
+        if len(reported) < 2:
+            st.caption("Needs two runs with a built report (Results tab → Build report).")
+        else:
+            c = st.columns(2)
+            base = c[0].selectbox("Base run", reported, index=min(1, len(reported) - 1))
+            test = c[1].selectbox("Compared run", reported, index=0)
+            if base != test:
+                res = compare.compare(os.path.join(S.data_dir, base), os.path.join(S.data_dir, test))
+                st.markdown(compare.markdown(res))
+                if res["rows"]:
+                    st.download_button("Comparison CSV", pd.DataFrame(res["rows"]).to_csv(index=False).encode(),
+                                       file_name="comparison.csv")
+
+    compare_panel()
