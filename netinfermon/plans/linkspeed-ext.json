@@ -1,0 +1,48 @@
+{
+  "description": "Extended link-speed plan: linkspeed plus 64K input (concurrency 1) and 16K input at concurrency 4.",
+  "points": [
+    {
+      "id": "P1",
+      "concurrency": 1,
+      "input_tokens": 1024,
+      "output_tokens": 1024
+    },
+    {
+      "id": "P2",
+      "concurrency": 1,
+      "input_tokens": 8192,
+      "output_tokens": 1024
+    },
+    {
+      "id": "P3",
+      "concurrency": 1,
+      "input_tokens": 32768,
+      "output_tokens": 1024
+    },
+    {
+      "id": "P4",
+      "concurrency": 4,
+      "input_tokens": 8192,
+      "output_tokens": 1024
+    },
+    {
+      "id": "P5",
+      "concurrency": 1,
+      "input_tokens": 65536,
+      "output_tokens": 1024
+    },
+    {
+      "id": "P6",
+      "concurrency": 4,
+      "input_tokens": 16384,
+      "output_tokens": 1024
+    }
+  ],
+  "warmup_rounds": 1,
+  "measured_rounds": 3,
+  "seed": 20261013,
+  "idle_gbps": 0.5,
+  "idle_seconds": 10,
+  "read_timeout_s": 900,
+  "force_output_length": true
+}

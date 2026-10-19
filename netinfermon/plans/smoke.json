@@ -1,0 +1,18 @@
+{
+  "description": "Smoke test (~2 min): one short point to check the endpoint, forced output length, timing and the link check before a full run.",
+  "points": [
+    {
+      "id": "S1",
+      "concurrency": 1,
+      "input_tokens": 1024,
+      "output_tokens": 128
+    }
+  ],
+  "warmup_rounds": 1,
+  "measured_rounds": 1,
+  "seed": 20261013,
+  "idle_gbps": 0.5,
+  "idle_seconds": 10,
+  "read_timeout_s": 900,
+  "force_output_length": true
+}

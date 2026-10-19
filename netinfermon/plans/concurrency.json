@@ -1,0 +1,42 @@
+{
+  "description": "Throughput sweep: 1K input, 256 output tokens at concurrency 1, 2, 4, 8, 16.",
+  "points": [
+    {
+      "id": "c1",
+      "concurrency": 1,
+      "input_tokens": 1024,
+      "output_tokens": 256
+    },
+    {
+      "id": "c2",
+      "concurrency": 2,
+      "input_tokens": 1024,
+      "output_tokens": 256
+    },
+    {
+      "id": "c4",
+      "concurrency": 4,
+      "input_tokens": 1024,
+      "output_tokens": 256
+    },
+    {
+      "id": "c8",
+      "concurrency": 8,
+      "input_tokens": 1024,
+      "output_tokens": 256
+    },
+    {
+      "id": "c16",
+      "concurrency": 16,
+      "input_tokens": 1024,
+      "output_tokens": 256
+    }
+  ],
+  "warmup_rounds": 1,
+  "measured_rounds": 3,
+  "seed": 20261013,
+  "idle_gbps": 0.5,
+  "idle_seconds": 10,
+  "read_timeout_s": 900,
+  "force_output_length": true
+}
